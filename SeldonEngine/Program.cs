@@ -1,7 +1,4 @@
-﻿using System;
-using System.Threading;
-using System.Threading.Tasks;
-using SeldonEngine.Corpus;
+﻿using SeldonEngine.Corpus;
 
 // -------------------------------------------------------------------------
 // SELDON ENGINE — Entry Point
@@ -35,6 +32,21 @@ Console.WriteLine("  2. Is date imprecision at ±10yr acceptable at 50yr wave sc
 Console.WriteLine("  3. Does institutional curation (IsHighlight) introduce selection bias?");
 Console.WriteLine("  4. Are sacred/secular classifications culturally universal?");
 Console.WriteLine();
+
+// -------------------------------------------------------------------------
+// Note on the 403 issue:
+//
+// The previous version placed Task.Delay(RateLimitMs) AFTER semaphore.Release(),
+// meaning the delay ran in parallel with the next request rather than before it.
+// This caused requests to burst with no throttle, triggering IP-level blocks.
+//
+// The fix: delay is now inside the try block, BEFORE semaphore.Release().
+// Rate limit is also reduced from 10,000ms to 250ms (4 req/s) — still polite,
+// but ~40x faster. Explicit 403/429/503 handlers add hard back-off on throttle signals.
+//
+// If you're resuming after a 403 block, wait ~10 minutes before re-running.
+// -------------------------------------------------------------------------
+
 Console.WriteLine("Press ENTER when ready to begin ingest. Ctrl+C to cancel.");
 Console.ReadLine();
 
@@ -54,7 +66,7 @@ var pipeline = new MetMuseumIngestPipeline(
 // RECOMMENDED FIRST RUN: European Paintings (departmentId = 11)
 // ~2,500 works · 1400–1900 · cleanest date metadata · strong Kondratiev coverage
 //
-// Full corpus run (all 470k objects) takes ~4-6 hours at polite rate limits
+// Full corpus run (all 470k objects) takes ~4–6 hours at 250ms rate limit
 // Run full corpus overnight after first-run validation succeeds
 //
 // Department IDs for reference:
@@ -80,7 +92,7 @@ var pipeline = new MetMuseumIngestPipeline(
 try
 {
     await pipeline.IngestAsync(
-        departmentId: 11,       // European Paintings — first signal layer
+        departmentId: 11,   // European Paintings — first signal layer
         startYear:    1700,     // Wave 1 onset
         endYear:      2025,     // Present
         hasImages:    true,

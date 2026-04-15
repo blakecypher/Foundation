@@ -4,7 +4,7 @@ namespace SeldonEngine.Corpus;
 
 public record MetObject
 {
-    [JsonPropertyName("objectID")]           public int     ObjectID          { get; init; }
+    [JsonPropertyName("objectID")]           public int     ObjectId          { get; init; }
     [JsonPropertyName("isHighlight")]        public bool    IsHighlight       { get; init; }
     [JsonPropertyName("accessionYear")]      public string? AccessionYear     { get; init; }
     [JsonPropertyName("isPublicDomain")]     public bool    IsPublicDomain    { get; init; }

@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Foundation", "Foundation\Foundation.csproj", "{912CE202-3A09-4CF6-8113-17ECBF1D9381}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SeldonEngine", "SeldonEngine\SeldonEngine.csproj", "{912CE202-3A09-4CF6-8113-17ECBF1D9381}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
