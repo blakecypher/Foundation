@@ -1,0 +1,42 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net8.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <AssemblyName>SeldonEngine</AssemblyName>
+        <RootNamespace>SeldonEngine</RootNamespace>
+        <Optimize>true</Optimize>
+        <!-- SIMD enabled for vector computation layer -->
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)'=='Release'">
+        <Optimize>true</Optimize>
+    </PropertyGroup>
+
+    <!-- Layer 1: HTTP ingest -->
+    <ItemGroup>
+        <PackageReference Include="System.Text.Json" Version="8.0.0" />
+    </ItemGroup>
+
+    <!--
+      Future layers — uncomment as we build:
+  
+      Layer 2: Vector computation
+      <PackageReference Include="Microsoft.ML" Version="3.0.1" />
+      <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.17.1" />
+  
+      Layer 3: Merkle DAG
+      <PackageReference Include="Ipfs.Core" Version="0.2.8" />
+  
+      Layer 4: Vector database
+      <PackageReference Include="Qdrant.Client" Version="1.9.0" />
+  
+      Semantic Kernel for agentic layer
+      <PackageReference Include="Microsoft.SemanticKernel" Version="1.11.0" />
+    -->
+
+</Project>
