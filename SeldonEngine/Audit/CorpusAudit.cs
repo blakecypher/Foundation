@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using SeldonEngine.Corpus;
 
@@ -25,26 +25,26 @@ namespace SeldonEngine.Audit
         // Answer: yes — treat as approximate ±5yr, not ground truth
         private static readonly List<KondratievPhase> KnownPhases =
         [
-            new KondratievPhase("Wave 1 Spring", 1787, 1800),
-            new KondratievPhase("Wave 1 Summer", 1800, 1815),
-            new KondratievPhase("Wave 1 Autumn", 1815, 1825),
-            new KondratievPhase("Wave 1 Winter", 1825, 1845),
-            new KondratievPhase("Wave 2 Spring", 1845, 1858),
-            new KondratievPhase("Wave 2 Summer", 1858, 1873),
-            new KondratievPhase("Wave 2 Autumn", 1873, 1883),
-            new KondratievPhase("Wave 2 Winter", 1883, 1897),
-            new KondratievPhase("Wave 3 Spring", 1897, 1907),
-            new KondratievPhase("Wave 3 Summer", 1907, 1920),
-            new KondratievPhase("Wave 3 Autumn", 1920, 1929),
-            new KondratievPhase("Wave 3 Winter", 1929, 1945),
-            new KondratievPhase("Wave 4 Spring", 1945, 1958),
-            new KondratievPhase("Wave 4 Summer", 1958, 1973),
-            new KondratievPhase("Wave 4 Autumn", 1973, 1983),
-            new KondratievPhase("Wave 4 Winter", 1983, 1997),
-            new KondratievPhase("Wave 5 Spring", 1997, 2007),
-            new KondratievPhase("Wave 5 Summer", 2007, 2015),
-            new KondratievPhase("Wave 5 Autumn", 2015, 2020),
-            new KondratievPhase("Wave 5 Winter", 2020, 2030)
+            new("Wave 1 Spring", 1787, 1800),
+            new("Wave 1 Summer", 1800, 1815),
+            new("Wave 1 Autumn", 1815, 1825),
+            new("Wave 1 Winter", 1825, 1845),
+            new("Wave 2 Spring", 1845, 1858),
+            new("Wave 2 Summer", 1858, 1873),
+            new("Wave 2 Autumn", 1873, 1883),
+            new("Wave 2 Winter", 1883, 1897),
+            new("Wave 3 Spring", 1897, 1907),
+            new("Wave 3 Summer", 1907, 1920),
+            new("Wave 3 Autumn", 1920, 1929),
+            new("Wave 3 Winter", 1929, 1945),
+            new("Wave 4 Spring", 1945, 1958),
+            new("Wave 4 Summer", 1958, 1973),
+            new("Wave 4 Autumn", 1973, 1983),
+            new("Wave 4 Winter", 1983, 1997),
+            new("Wave 5 Spring", 1997, 2007),
+            new("Wave 5 Summer", 2007, 2015),
+            new("Wave 5 Autumn", 2015, 2020),
+            new("Wave 5 Winter", 2020, 2030)
         ];
         private static readonly string[] SourceArray = ["American","British","French","Italian","German","Dutch / Flemish"
         ];
@@ -63,12 +63,14 @@ namespace SeldonEngine.Audit
             var report = new AuditReport
             {
                 TotalRecords      = records.Count,
-                DecadeDistribution = BuildDecadeDistribution(records),
+                DecadeDistribution      = BuildDecadeDistribution(records),
+                AcquisitionDistribution = BuildAcquisitionDistribution(records),
                 SacredSecularByEra = BuildSacredSecularRatio(records),
                 CulturalBreakdown  = BuildCulturalBreakdown(records),
                 DomainBreakdown    = BuildDomainBreakdown(records),
                 KondratievAlignment = BuildKondratievAlignment(records),
                 Anomalies          = SurfaceAnomalies(records),
+                CrossCultural = BuildCrossCulturalComparison(records),
                 SocraticFindings   = []
             };
 
@@ -346,16 +348,165 @@ namespace SeldonEngine.Audit
                 .Where(b => b.Phase.Contains("Winter"))
                 .Average(b => b.RecordsPerYear);
 
-            if (summers > 0 && winters > 0)
+            if (!(summers > 0) || !(winters > 0)) return;
+            var ratio = summers / winters;
+            findings.Add(ratio > 1.2
+                ? $"[SIGNAL] Summer phases produce {ratio:F1}x more records per year than winter phases. " +
+                  $"Production density tracks Kondratiev cycle. Candidate invariant — requires Socratic promotion."
+                : $"[INCONCLUSIVE] Summer/winter production ratio is {ratio:F1}x. " +
+                  $"Weak signal. Socratic probe: is curation date (acquisition year) " +
+                  $"confounding creation date signal?");
+            
+            CompareAcquisitionVsCreation(report, findings);
+        }
+        
+        private static Dictionary<int, DecadeBucket> BuildAcquisitionDistribution(
+            List<AestheticRecord> records)
+        {
+            return records
+                .Where(r => r.YearAcquired.HasValue)
+                .GroupBy(r => (r.YearAcquired!.Value / 10) * 10)
+                .ToDictionary(
+                    g => g.Key, 
+                    g => new DecadeBucket(g.Key) { Count = g.Count() }
+                );
+        }
+        
+        private static void CompareAcquisitionVsCreation(AuditReport report, List<string> findings)
+        {
+            var creationDecades = report.DecadeDistribution;
+            var acquisitionDecades = report.AcquisitionDistribution;
+
+            if (creationDecades.Count == 0 || acquisitionDecades.Count == 0)
             {
-                var ratio = summers / winters;
-                findings.Add(ratio > 1.2
-                    ? $"[SIGNAL] Summer phases produce {ratio:F1}x more records per year than winter phases. " +
-                      $"Production density tracks Kondratiev cycle. Candidate invariant — requires Socratic promotion."
-                    : $"[INCONCLUSIVE] Summer/winter production ratio is {ratio:F1}x. " +
-                      $"Weak signal. Socratic probe: is curation date (acquisition year) " +
-                      $"confounding creation date signal?");
+                findings.Add("[CAUTION] Cannot compare acquisition vs creation: missing temporal data.");
+                return;
             }
+
+            var commonDecades = creationDecades.Keys.Intersect(acquisitionDecades.Keys).ToList();
+            if (commonDecades.Count < 3)
+            {
+                findings.Add("[CAUTION] Insufficient overlap between creation and acquisition decades for correlation analysis.");
+                return;
+            }
+
+            var creationCounts = commonDecades.Select(d => (double)creationDecades[d].Count).ToList();
+            var acquisitionCounts = commonDecades.Select(d => (double)acquisitionDecades[d].Count).ToList();
+
+            var creationMean = creationCounts.Average();
+            var acquisitionMean = acquisitionCounts.Average();
+            var creationStd = Math.Sqrt(creationCounts.Select(c => Math.Pow(c - creationMean, 2)).Average());
+            var acquisitionStd = Math.Sqrt(acquisitionCounts.Select(c => Math.Pow(c - acquisitionMean, 2)).Average());
+
+            if (creationStd == 0 || acquisitionStd == 0)
+            {
+                findings.Add("[CAUTION] No variance in creation or acquisition distribution — cannot compute correlation.");
+                return;
+            }
+
+            var correlation = commonDecades
+                .Select(d => ((creationDecades[d].Count - creationMean) / creationStd) *
+                             ((acquisitionDecades[d].Count - acquisitionMean) / acquisitionStd))
+                .Sum() / commonDecades.Count;
+
+            switch (correlation)
+            {
+                case > 0.7:
+                    findings.Add($"[CAUTION] Acquisition and creation distributions are highly correlated (r={correlation:F2}). " +
+                                 "Socratic probe: Are summer-phase records more likely to be acquired due to curator bias? " +
+                                 "Test: compare summer/winter ratios for creation vs acquisition dates.");
+                    break;
+                case < 0.3:
+                    findings.Add($"[SIGNAL] Acquisition and creation distributions diverge (r={correlation:F2}). " +
+                                 "Curator bias is NOT driving the Kondratiev pattern. Creation-date signal is likely genuine.");
+                    break;
+                default:
+                    findings.Add($"[NEUTRAL] Moderate correlation between acquisition and creation (r={correlation:F2}). " +
+                                 "Both curation and production cycles may contribute to the observed pattern.");
+                    break;
+            }
+
+            var creationSummerRatio = GetSummerWinterRatio(creationDecades);
+            var acquisitionSummerRatio = GetSummerWinterRatio(acquisitionDecades);
+
+            if (acquisitionSummerRatio > creationSummerRatio * 1.3)
+            {
+                findings.Add($"[WARNING] Acquisition shows {acquisitionSummerRatio/creationSummerRatio:F1}x stronger Kondratiev bias than creation. " +
+                    "Economic cycles drive museum purchasing, not just artistic production. This confounds the hypothesis.");
+            }
+        }
+
+        private static CrossCulturalComparison BuildCrossCulturalComparison(
+            List<AestheticRecord> records)
+        {
+            var westernTerms = new[]
+            {
+                "American","British","French","Italian","German","Dutch","Flemish",
+                "Spanish","Austrian","Scandinavian","Danish","Swedish","Norwegian",
+                "Swiss","Belgian","Greek","Roman","European","Bohemian"
+            };
+ 
+            bool IsWestern(AestheticRecord r) =>
+                westernTerms.Any(w =>
+                    r.Culture.Contains(w, StringComparison.OrdinalIgnoreCase) ||
+                    r.Country.Contains(w, StringComparison.OrdinalIgnoreCase));
+ 
+            var western    = records.Where(IsWestern).ToList();
+            var nonWestern = records
+                .Where(r => !IsWestern(r) && !string.IsNullOrEmpty(r.Culture))
+                .ToList();
+ 
+            var wByDecade  = western
+                .Where(r => r.YearCreated is > 0)
+                .GroupBy(r => (r.YearCreated!.Value / 10) * 10)
+                .ToDictionary(g => g.Key, g => g.Count());
+ 
+            var nwByDecade = nonWestern
+                .Where(r => r.YearCreated is > 0)
+                .GroupBy(r => (r.YearCreated!.Value / 10) * 10)
+                .ToDictionary(g => g.Key, g => g.Count());
+ 
+            var shared = wByDecade.Keys.Intersect(nwByDecade.Keys).OrderBy(d => d).ToList();
+            var rVal  = shared.Count >= 5
+                ? PearsonHelper.Compute(
+                    shared.Select(d => (double)wByDecade[d]).ToList(),
+                    shared.Select(d => (double)nwByDecade[d]).ToList())
+                : 0;
+ 
+            return new CrossCulturalComparison(
+                WesternCount:       western.Count,
+                NonWesternCount:    nonWestern.Count,
+                WesternByDecade:    wByDecade,
+                NonWesternByDecade: nwByDecade,
+                NonWesternCultures: nonWestern
+                    .GroupBy(r => string.IsNullOrEmpty(r.Culture) ? "Unknown" : r.Culture)
+                    .OrderByDescending(g => g.Count())
+                    .Take(20)
+                    .ToDictionary(g => g.Key, g => g.Count()),
+                PearsonCorrelation: rVal,
+                SocraticVerdict:    PearsonHelper.Verdict(rVal)
+            );
+        }
+        
+        private static double GetSummerWinterRatio(Dictionary<int, DecadeBucket> decadeDistribution)
+        {
+            var summerDecades = KnownPhases
+                .Where(p => p.Name.Contains("Summer"))
+                .SelectMany(p => decadeDistribution.Keys.Where(d => d >= p.Start && d < p.End))
+                .Distinct()
+                .Select(d => decadeDistribution[d].Count)
+                .DefaultIfEmpty(0)
+                .Average();
+
+            var winterDecades = KnownPhases
+                .Where(p => p.Name.Contains("Winter"))
+                .SelectMany(p => decadeDistribution.Keys.Where(d => d >= p.Start && d < p.End))
+                .Distinct()
+                .Select(d => decadeDistribution[d].Count)
+                .DefaultIfEmpty(1)
+                .Average();
+
+            return winterDecades > 0 ? summerDecades / winterDecades : 0;
         }
 
         // -----------------------------------------------------------------
@@ -444,7 +595,7 @@ namespace SeldonEngine.Audit
             sb.AppendLine();
 
             // Anomalies
-            if (report.Anomalies.Any())
+            if (report.Anomalies.Count != 0)
             {
                 sb.AppendLine("── Statistical anomalies (|z| > 2.0) ────────────────");
                 foreach (var a in report.Anomalies)
@@ -469,14 +620,51 @@ namespace SeldonEngine.Audit
             sb.AppendLine("═══════════════════════════════════════════════════════");
 
             var output = sb.ToString();
+            RenderCrossCultural(report, sb);
             Console.WriteLine(output);
 
-            if (outputPath is not null)
+            if (outputPath is null) return;
+            var reportFile = Path.Combine(outputPath, $"corpus_audit_{DateTime.UtcNow:yyyyMMdd_HHmmss}.txt");
+            File.WriteAllText(reportFile, output);
+            Console.WriteLine($"Report saved: {reportFile}");
+        }
+        private static void RenderCrossCultural(AuditReport report, StringBuilder sb)
+        {
+            var cc = report.CrossCultural;
+            if (cc is null) return;
+ 
+            var total = cc.WesternCount + cc.NonWesternCount;
+            sb.AppendLine("── Cross-cultural falsification ──────────────────────");
+            sb.AppendLine($"  Western:     {cc.WesternCount,7:N0}  {(total > 0 ? (double)cc.WesternCount/total : 0),6:P0}");
+            sb.AppendLine($"  Non-Western: {cc.NonWesternCount,7:N0}  {(total > 0 ? (double)cc.NonWesternCount/total : 0),6:P0}");
+            sb.AppendLine();
+            sb.AppendLine("  Non-Western cultures present:");
+            foreach (var (culture, count) in cc.NonWesternCultures.Take(12))
+                sb.AppendLine($"    {culture,-30} {count,6:N0}");
+            sb.AppendLine();
+            sb.AppendLine("  Decade alignment W=Western ▪  NW=Non-Western ▫");
+ 
+            var allDecades = cc.WesternByDecade.Keys
+                .Union(cc.NonWesternByDecade.Keys)
+                .Where(d => d >= 1400)
+                .OrderBy(d => d);
+ 
+            var wMax  = cc.WesternByDecade.Values.DefaultIfEmpty(1).Max();
+            var nwMax = cc.NonWesternByDecade.Values.DefaultIfEmpty(1).Max();
+ 
+            foreach (var d in allDecades)
             {
-                var reportFile = Path.Combine(outputPath, $"corpus_audit_{DateTime.UtcNow:yyyyMMdd_HHmmss}.txt");
-                File.WriteAllText(reportFile, output);
-                Console.WriteLine($"Report saved: {reportFile}");
+                var w  = cc.WesternByDecade.GetValueOrDefault(d, 0);
+                var nw = cc.NonWesternByDecade.GetValueOrDefault(d, 0);
+                if (w == 0 && nw == 0) continue;
+                var wBar  = new string('▪', (int)((double)w  / wMax  * 20));
+                var nwBar = new string('▫', (int)((double)nw / nwMax * 20));
+                sb.AppendLine($"  {d,-6} W:{wBar,-22} NW:{nwBar,-22}");
             }
+ 
+            sb.AppendLine();
+            sb.AppendLine($"  {cc.SocraticVerdict}");
+            sb.AppendLine();
         }
 
         // -----------------------------------------------------------------

@@ -1,55 +1,30 @@
-﻿using SeldonEngine.Corpus;
+using SeldonEngine.Corpus;
+using SeldonEngine.Audit;
 
 // -------------------------------------------------------------------------
-// SELDON ENGINE — Entry Point
-// Layer 1: Aesthetic Corpus Ingest — Metropolitan Museum of Art
+// SELDON ENGINE v4 — Entry Point
 //
 // Socratic precondition log:
-//   [OPEN]    Does museum curation bias the civilizational signal?
-//   [OPEN]    Is 470k objects sufficient statistical mass at Kondratiev scale?
-//   [OPEN]    Does the Met's Western bias invalidate cross-cultural claims?
-//   [PENDING] Falsification: run same pipeline on Europeana — do signals diverge?
+//   [OPEN]     Does museum curation bias the civilizational signal?
+//   [PARTIAL]  Western bias — broadened corpus ingest reduces from 82%
+//   [PENDING]  Europeana cross-cultural falsification
+//   [ACTIVE]   Acquisition vs creation bias probe — CompareAcquisitionVsCreation
 //
-// These questions are not obstacles. They are the engine's immune system.
-// An invariant that cannot survive them was never an invariant.
+// Command routing:
+//   dotnet run -- audit              audit all corpus files
+//   dotnet run -- broaden            ingest Medieval, Music, Asian, Islamic, Greek/Roman
+//   dotnet run -- dept <id>          ingest single department by ID
+//   dotnet run -- europeana <query>  ingest from Europeana (requires EUROPEANA_API_KEY env var)
+//   dotnet run                       ingest Modern & Contemporary Art (original run)
 // -------------------------------------------------------------------------
 
-var cts      = new CancellationTokenSource();
 var progress = new Progress<IngestProgress>(p =>
 {
-    var pct = p.Total > 0 ? (p.Current * 100 / p.Total) : 0;
-    Console.Write($"\r[{pct,3}%] {p.Message,-70}");
+    var pct = p.Total > 0 ? p.Current * 100 / p.Total : 0;
+    Console.Write($"\r[{pct,3}%] {p.Message,-72}");
 });
 
-Console.WriteLine("SELDON ENGINE — Layer 1 Aesthetic Corpus Ingest");
-Console.WriteLine("================================================");
-Console.WriteLine("Source: Metropolitan Museum of Art Open Access API");
-Console.WriteLine();
-Console.WriteLine("Socratic preconditions:");
-Console.WriteLine("  Before this data becomes signal, ask:");
-Console.WriteLine("  1. What would falsify the claim that ornamentation tracks Kondratiev phase?");
-Console.WriteLine("  2. Is date imprecision at ±10yr acceptable at 50yr wave scale?");
-Console.WriteLine("  3. Does institutional curation (IsHighlight) introduce selection bias?");
-Console.WriteLine("  4. Are sacred/secular classifications culturally universal?");
-Console.WriteLine();
-
-// -------------------------------------------------------------------------
-// Note on the 403 issue:
-//
-// The previous version placed Task.Delay(RateLimitMs) AFTER semaphore.Release(),
-// meaning the delay ran in parallel with the next request rather than before it.
-// This caused requests to burst with no throttle, triggering IP-level blocks.
-//
-// The fix: delay is now inside the try block, BEFORE semaphore.Release().
-// Rate limit is also reduced from 10,000ms to 250ms (4 req/s) — still polite,
-// but ~40x faster. Explicit 403/429/503 handlers add hard back-off on throttle signals.
-//
-// If you're resuming after a 403 block, wait ~10 minutes before re-running.
-// -------------------------------------------------------------------------
-
-Console.WriteLine("Press ENTER when ready to begin ingest. Ctrl+C to cancel.");
-Console.ReadLine();
-
+var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
@@ -57,71 +32,131 @@ Console.CancelKeyPress += (_, e) =>
     Console.WriteLine("\nCancellation requested — finishing current batch...");
 };
 
-var pipeline = new MetMuseumIngestPipeline(
-    outputPath: "./corpus_output",
-    progress:   progress
-);
+// ── audit ─────────────────────────────────────────────────────────────────
+if (args.Length > 0 && args[0] == "audit")
+{
+    Console.WriteLine("SELDON ENGINE — Corpus Audit");
+    Console.WriteLine("Socratic precondition: interrogate before building upward.");
+    Console.WriteLine();
+    var audit  = new CorpusAudit("./corpus_output");
+    var report = await audit.RunAsync();
+    CorpusAudit.RenderReport(report, "./corpus_output");
+    return;
+}
 
-// -------------------------------------------------------------------------
-// RECOMMENDED FIRST RUN: European Paintings (departmentId = 11)
-// ~2,500 works · 1400–1900 · cleanest date metadata · strong Kondratiev coverage
-//
-// Full corpus run (all 470k objects) takes ~4–6 hours at 250ms rate limit
-// Run full corpus overnight after first-run validation succeeds
-//
-// Department IDs for reference:
-//   1  = American Decorative Arts
-//   3  = Ancient Near Eastern Art
-//   4  = Arms and Armor
-//   6  = Asian Art
-//   7  = The Costume Institute
-//   8  = Drawings and Prints
-//   9  = Egyptian Art
-//   10 = European Decorative Arts
-//   11 = European Paintings          ← START HERE
-//   12 = European Sculpture
-//   13 = Greek and Roman Art
-//   14 = Islamic Art
-//   15 = The Robert Lehman Collection
-//   17 = Medieval Art
-//   18 = Musical Instruments         ← SECOND RUN
-//   19 = Photographs
-//   21 = Modern and Contemporary Art
-// -------------------------------------------------------------------------
+// ── broaden ───────────────────────────────────────────────────────────────
+if (args.Length > 0 && args[0] == "broaden")
+{
+    Console.WriteLine("SELDON ENGINE — Broadened Corpus Ingest");
+    Console.WriteLine("Socratic mandate: reduce Western bias, add Music and Architecture domains.");
+    Console.WriteLine();
+    Console.WriteLine("Targets:");
+    foreach (var t in BroadenedMetConfig.Targets)
+        Console.WriteLine($"  Dept {t.Id,2}: {t.Name,-28} [{t.DefaultDomain}]");
+    Console.WriteLine();
+
+    foreach (var target in BroadenedMetConfig.Targets.OrderBy(t => t.Priority))
+    {
+        if (cts.Token.IsCancellationRequested) break;
+        Console.WriteLine($"── {target.Name} (dept {target.Id}) ──────────────────────");
+        Console.WriteLine($"   {target.SocraticNote}");
+        Console.WriteLine();
+
+        var source   = new BroadenedMetSource(target);
+        var pipeline = new IngestPipeline(source, "./corpus_output", progress);
+        await pipeline.IngestAsync(ct: cts.Token);
+        Console.WriteLine();
+    }
+
+    Console.WriteLine("Broaden complete. Run: dotnet run -- audit");
+    return;
+}
+
+// ── dept <id> ─────────────────────────────────────────────────────────────
+if (args.Length > 1 && args[0] == "dept" && int.TryParse(args[1], out var deptId))
+{
+    var target = BroadenedMetConfig.Targets.FirstOrDefault(t => t.Id == deptId)
+        ?? new DepartmentTarget(deptId, $"Dept{deptId}", "Art", 99,
+            "Manual single-department ingest.");
+
+    Console.WriteLine($"Ingesting dept {deptId}: {target.Name}");
+    var source   = new BroadenedMetSource(target);
+    var pipeline = new IngestPipeline(source, "./corpus_output", progress);
+    await pipeline.IngestAsync(ct: cts.Token);
+    Console.WriteLine();
+    Console.WriteLine("Done. Run: dotnet run -- audit");
+    return;
+}
+
+// ── europeana <query> ─────────────────────────────────────────────────────
+if (args.Length > 1 && args[0] == "europeana")
+{
+    // Socratic note: Europeana is the cross-cultural falsification layer.
+    // The signal it must answer: do non-Western collections show the same
+    // decade density peaks as the Met Western corpus?
+    // Required env var: EUROPEANA_API_KEY
+    // Register free at: https://pro.europeana.eu/page/get-api
+    //
+    // Recommended first query:
+    //   dotnet run -- europeana "(COUNTRY:china OR COUNTRY:japan OR COUNTRY:india) AND TYPE:IMAGE"
+    // Then compare decade distribution with Met Western corpus.
+
+    var query    = string.Join(" ", args[1..]);
+    Console.WriteLine($"SELDON ENGINE — Europeana Ingest");
+    Console.WriteLine($"Query: {query}");
+    Console.WriteLine();
+
+    try
+    {
+        var europeanaSource = new EuropeanaSource(query);
+        var pipeline = new IngestPipeline(europeanaSource, "./corpus_output", progress);
+        await pipeline.IngestAsync(startYear: 1700, endYear: 2025, ct: cts.Token);
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.WriteLine($"[ERROR] {ex.Message}");
+        Console.WriteLine("Set environment variable EUROPEANA_API_KEY before running Europeana ingest.");
+        Console.WriteLine("Register free at: https://pro.europeana.eu/page/get-api");
+    }
+
+    return;
+}
+
+// ── default: original Met ingest ──────────────────────────────────────────
+Console.WriteLine("SELDON ENGINE — Met Museum Ingest");
+Console.WriteLine("Default: Modern and Contemporary Art (dept 21)");
+Console.WriteLine();
+Console.WriteLine("Socratic preconditions:");
+Console.WriteLine("  1. What would falsify the claim that ornamentation tracks Kondratiev phase?");
+Console.WriteLine("  2. Is date imprecision at ±10yr acceptable at 50yr wave scale?");
+Console.WriteLine("  3. Does institutional curation (IsHighlight) introduce selection bias?");
+Console.WriteLine("  4. Are sacred/secular classifications culturally universal?");
+Console.WriteLine();
+Console.WriteLine("Press ENTER when ready. Ctrl+C to cancel.");
+Console.ReadLine();
+
+// ── Fix: EuropeanaSource was hardcoding API key as env var name ──────────
+// Your EuropeanaSource.cs has:
+//   private const string ApiKeyEnvVar = "tiffernalk";
+// This should be:
+//   private const string ApiKeyEnvVar = "EUROPEANA_API_KEY";
+// and the actual key stored in that env var, not in source.
+// ─────────────────────────────────────────────────────────────────────────
+
+ICorpusSource metSource = new MetSource(departmentId: 21, hasImages: true);
+var ingestPipeline   = new IngestPipeline(metSource, "./corpus_output", progress);
 
 try
 {
-    await pipeline.IngestAsync(
-        departmentId: 11,   // European Paintings — first signal layer
-        startYear:    1700,     // Wave 1 onset
-        endYear:      2025,     // Present
-        hasImages:    true,
-        ct:           cts.Token
-    );
-
+    await ingestPipeline.IngestAsync(startYear: 1700, endYear: 2025, ct: cts.Token);
     Console.WriteLine();
-    Console.WriteLine();
-    Console.WriteLine("Ingest complete.");
-    Console.WriteLine("Output: ./corpus_output/*.ndjson");
-    Console.WriteLine();
-    Console.WriteLine("Next steps:");
-    Console.WriteLine("  1. Inspect output — verify date distribution covers Kondratiev waves");
-    Console.WriteLine("  2. Run sacred/secular classification audit — sample 100 records manually");
-    Console.WriteLine("  3. Run Musical Instruments department (id=18) for music layer");
-    Console.WriteLine("  4. Cross-check: does record count per decade correlate with known boom periods?");
-    Console.WriteLine("     (More art produced in Kondratiev summers — this itself is a signal)");
-    Console.WriteLine();
-    Console.WriteLine("Socratic checkpoint before proceeding to vector layer:");
-    Console.WriteLine("  Q: Does the decade distribution of works confirm or challenge Kondratiev periodicity?");
-    Console.WriteLine("  Q: Is the sacred/secular ratio trend visible in raw metadata alone?");
-    Console.WriteLine("  Q: What anomalies appear that the model does not predict?");
+    Console.WriteLine("Ingest complete. Run: dotnet run -- audit");
 }
 catch (OperationCanceledException)
 {
-    Console.WriteLine("\nIngest cancelled. Partial output preserved in ./corpus_output/");
+    Console.WriteLine("\nCancelled. Partial output preserved in ./corpus_output/");
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"\nFatal error: {ex.Message}");
-    Console.WriteLine(ex.StackTrace);
+    Console.WriteLine($"\nFatal: {ex.Message}");
 }

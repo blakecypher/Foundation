@@ -19,7 +19,7 @@
 
     <!-- Layer 1: HTTP ingest -->
     <ItemGroup>
-        <PackageReference Include="System.Text.Json" Version="8.0.0" />
+        <PackageReference Include="System.Text.Json" Version="10.0.6" />
     </ItemGroup>
     <ItemGroup>
       <Folder Include="corpus_output\" />
